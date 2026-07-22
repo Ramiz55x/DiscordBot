@@ -1,586 +1,558 @@
-import os
 import discord
 from discord.ext import commands
 import json
 from groq import Groq as G
 import asyncio
-
-MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
-GUILD = None
-
-
-history = []
-
+import re
 import os
+from datetime import timedelta
+
+MODEL = "llama-3.3-70b-versatile"
+
+# ملفات تخزين البيانات
+DATA_FILE = "data.json"
+CUSTOM_COMMANDS_FILE = "custom_commands.json"
+ROOM_COLORS_FILE = "room_colors.json"
 
 def get_token():
-    return os.getenv("TOKEN")
-    
+    with open(DATA_FILE, "r", encoding="utf-8") as file:
+        return json.load(file)["TOKEN"].strip()
+
 def get_key():
-    with open("data.json", "r") as file:
-        key = json.load(file)["KEY"]
-        return str(key)
-    
+    with open(DATA_FILE, "r", encoding="utf-8") as file:
+        return json.load(file)["KEY"].strip()
 
 disor = G(api_key=get_key())
-    
+
+# تحميل وحفظ الأوامر المخصصة
+def load_custom_commands():
+    if os.path.exists(CUSTOM_COMMANDS_FILE):
+        try:
+            with open(CUSTOM_COMMANDS_FILE, "r", encoding="utf-8") as file:
+                return json.load(file)
+        except Exception:
+            return {}
+    return {}
+
+def save_custom_commands(cmds):
+    with open(CUSTOM_COMMANDS_FILE, "w", encoding="utf-8") as file:
+        json.dump(cmds, file, ensure_ascii=False, indent=4)
+
+# تحميل وحفظ ألوان الرومات
+def load_room_colors():
+    if os.path.exists(ROOM_COLORS_FILE):
+        try:
+            with open(ROOM_COLORS_FILE, "r", encoding="utf-8") as file:
+                return json.load(file)
+        except Exception:
+            return {}
+    return {}
+
+def save_room_colors(colors):
+    with open(ROOM_COLORS_FILE, "w", encoding="utf-8") as file:
+        json.dump(colors, file, ensure_ascii=False, indent=4)
+
+custom_commands = load_custom_commands()
+room_colors = load_room_colors()
+
+# تفعيل الـ Intents بالكامل
 intents = discord.Intents.default()
+intents.guilds = True        
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot("!", intents=intents)
-
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
     print(f"Logged as: {bot.user}")
+    for guild in bot.guilds:
+        try:
+            await guild.chunk()
+        except Exception as e:
+            print(f"Failed to chunk guild {guild.name}: {e}")
+
+# قائمة الدول العربية
+ARAB_COUNTRIES = [
+    {"name": "مصر 🇪🇬", "color": "#FF0000"},
+    {"name": "السعودية 🇸🇦", "color": "#006400"},
+    {"name": "الإمارات 🇦🇪", "color": "#00FF00"},
+    {"name": "الكويت 🇰🇼", "color": "#008080"},
+    {"name": "قطر 🇶🇦", "color": "#800020"},
+    {"name": "البحرين 🇧🇭", "color": "#FF4500"},
+    {"name": "عمان 🇴🇲", "color": "#2E8B57"},
+    {"name": "العراق 🇮🇶", "color": "#FF1493"},
+    {"name": "الأردن 🇯🇴", "color": "#A0522D"},
+    {"name": "فلسطين 🇵🇸", "color": "#000000"},
+    {"name": "سوريا 🇸🇾", "color": "#4682B4"},
+    {"name": "لبنان 🇱🇧", "color": "#FF3E96"},
+    {"name": "اليمن 🇾🇪", "color": "#8B0000"},
+    {"name": "ليبيا 🇱🇾", "color": "#556B2F"},
+    {"name": "السودان 🇸🇩", "color": "#008B8B"},
+    {"name": "الجزائر 🇩🇿", "color": "#228B22"},
+    {"name": "المغرب 🇲🇦", "color": "#D2691E"},
+    {"name": "تونس 🇹🇳", "color": "#FF6347"},
+    {"name": "موريتانيا 🇲🇷", "color": "#32CD32"},
+    {"name": "الصومال 🇸🇴", "color": "#1E90FF"},
+    {"name": "جيبوتي 🇩🇯", "color": "#00BFFF"},
+    {"name": "جزر القمر 🇰🇲", "color": "#DAA520"}
+]
+
+COLOR_MAP = {
+    "اسود": "#010101", "أسود": "#010101", "black": "#010101",
+    "abiad": "#ffffff", "ابيض": "#ffffff", "أبيض": "#ffffff", "white": "#ffffff",
+    "احمر": "#ff0000", "أحمر": "#ff0000", "red": "#ff0000",
+    "اخضر": "#00ff00", "أخضر": "#00ff00", "green": "#00ff00",
+    "azraq": "#0000ff", "ازرق": "#0000ff", "أزرق": "#0000ff", "blue": "#0000ff",
+    "asfar": "#ffff00", "اصفر": "#ffff00", "أصفر": "#ffff00", "yellow": "#ffff00",
+    "wardi": "#ffc0cb", "وردي": "#ffc0cb", "pink": "#ffc0cb",
+    "banafsaji": "#800080", "بنفسجي": "#800080", "purple": "#800080",
+    "bortoqali": "#ffa500", "برتقالي": "#ffa500", "orange": "#ffa500",
+    "ramadi": "#808080", "رمادي": "#808080", "gray": "#808080", "grey": "#808080"
+}
+
+def parse_color(color_str: str) -> discord.Colour:
+    if not color_str:
+        return discord.Colour.default()
+    color_clean = color_str.strip().lower().replace("#", "")
+    for name, hex_val in COLOR_MAP.items():
+        if name in color_clean or color_clean in name:
+            return discord.Colour.from_str(hex_val)
+    try:
+        return discord.Colour.from_str(f"#{color_clean}")
+    except:
+        return discord.Colour.default()
 
 def return_server_info(guild: discord.Guild):
     if not guild:
-        return
-    
-    info = ""
-    
-    info += f"Server: {guild.name} - {guild.id}\nCategories:\n"
-
+        return ""
+    info = f"Server: {guild.name} - {guild.id}\nCategories:\n"
     for category in guild.categories:
         info += f"- {category.name} ({category.id})\n"
-
     info += "Channels:\n"
-
-
     for channel in guild.channels:
         info += f"- {channel.name} ({channel.id})\n"
-    
-
     info += "Roles:\n"
-    
     for role in guild.roles:
         info += f"- Pos: {role.position}, Name: {role.name} ({role.id})\n"
-
-
-
-    
-
-
-    
     return info
 
-
-AiAbout = f"""
-You are a Discord bot named Disor 1.
-- Talk in Arabic only, NEVER use any other language
-- You help users manage their Discord server
-- talk friendly and talk with المصريه العاميه
-
-
-What you can do?
-you can Only do these skills:
-- Create Channels: Voices, Text and add them to categories
-- Delete Channels
-- Edit Channel Name
-- Create Roles
-- Give Roles
-- Create Categories
-- more soon...
-
-Aliases:
-Channel: روم - شات - غرفه - قناة - شانل
-Voice: فويس - صوتي
-Role: رول - رتبه
-
-Discord Permissions:
-⚙️ General Server Permissions
-
-administrator: Grants all permissions and bypasses channel restrictions. (this role is so dengerous to grant, its make the user like the server owner)
-
-
-manage_channels: Create, edit, or delete channels.
-manage_roles: Create, edit, or delete roles.
-manage_expressions: Create, edit, or delete custom emojis, stickers, and sounds.
-view_audit_log: View the server's history of actions.
-view_guild_insights: View server analytics and data.
-manage_webhooks: Create, edit, or delete webhooks.
-manage_guild: Change the server name, region, or settings.
-create_instant_invite: Generate invite links.
-change_nickname: Change own nickname.
-manage_nicknames: Change other members' nicknames.
-kick_members: Kick members from the server.
-ban_members: Permanently ban members.
-manage_events: Create, edit, or delete scheduled events.
-moderate_members: Timeout members or approve membership requests.
-view_creator_monetization_analytics: View team monetization statistics. [1, 2, 3, 4, 5]
-
-💬 Text Permissions
-view_channel: Read text channels and see voice channels.
-send_messages: Send messages in text channels.
-send_messages_in_threads: Send messages within threads.
-create_public_threads: Create threads visible to everyone.
-create_private_threads: Create threads visible only to invited users.
-embed_links: Allow links to generate rich previews.
-attach_files: Upload files and images.
-add_reactions: Add new emoji reactions to messages.
-external_emojis: Use emojis from other servers.
-external_stickers: Use stickers from other servers.
-mention_everyone: Notify everyone via @everyone or @here tags.
-manage_messages: Delete or pin messages.
-manage_threads: Rename, archive, or delete threads.
-read_message_history: View past messages in a channel.
-send_tts_messages: Use the text-to-speech /tts command.
-use_application_commands: Use slash commands and context menus.
-send_voice_messages: Send audio voice messages. [1, 2, 3, 4, 5]
-
-🔊 Voice Permissions
-connect: Join voice or stage channels.
-speak: Talk in voice channels.
-stream: Stream video or share screens.
-use_embedded_activities: Start and play Discord Activities.
-use_voice_activation: Talk without using push-to-talk.
-priority_speaker: Reduce other users' volume when speaking.
-mute_members: Mute other users in voice.
-deafen_members: Deafen other users in voice.
-move_members: Move users between voice channels.
-request_to_speak: Request to talk in Stage channels.
-use_soundboard: Use soundboard sounds in voice.
-use_external_sounds: Use sounds from other servers
-
-⚠️ IMPORTANT: The role's NAME does not determine its permissions.
-A role named "Admin", "Moderator", "Staff", etc. does NOT automatically need 
-"administrator": true.
-
-Only set "administrator": true if the user EXPLICITLY says something like:
-- "give it administrator permission"
-- "full admin access" / "كل الصلاحيات"
-- "owner-level permissions"
-- "give it the administrator permission specifically"
-
-If the user just says "create an Admin role with what it needs" WITHOUT 
-explicitly requesting "administrator" permission itself, infer the SPECIFIC 
-permissions needed instead (manage_roles, manage_channels, kick_members, 
-ban_members, manage_messages, manage_guild, moderate_members, etc.)
-
-When in doubt, prefer specific permissions over "administrator": true.
-"""
-
-
-
-
-
-def disor_get_category(guild: discord.Guild, target: str):
-    server_categories = {}
-
-    for category in guild.categories:
-        server_categories[category.name] = {
-            "id": str(category.id)
-        }
-
-    default_categories = {
-        "System": {
-            "id": "1234567899",
-        },
-
-        "Generals": {
-            "id": "1321462575",
-        },
-
-        "Moderators": {
-            "id": "432534654",
-        },
-
-    }
-
-    disor_category = disor.chat.completions.create(
-                    model=MODEL,
-                    messages=[
-                        {"role": "system", "content": "You going to take a name of category and search for one in the list and return its id ONLY"},
-
-                        {"role": "user", "content": f"اعملي روم سميه chat و حطه في كاتجوري ديه General\ncategories: {default_categories}"},
-                        {"role": "assistant", "content": "1321462575"},
-
-                        {"role": "user", "content": f"في كاتجوري هنا ديه Id بتعها: 1321462575\ncategories: {default_categories}"},
-                        {"role": "assistant", "content": "1321462575"},
-
-                        {"role": "user", "content": f"شات ده هيتحط في مكان الادمنز\ncategories: {default_categories}"},
-                        {"role": "assistant", "content": "432534654"},
-
-                        {"role": "user", "content": f"{target}\ncategories: {server_categories}"}
-                    ]
-    )
-
-    return guild.get_channel(int(disor_category.choices[0].message.content))
-
-
-def disor_get_channel(guild: discord.Guild, target: str):
-    server_channels = {}
-
-    for channel in guild.channels:
-        server_channels[channel.name] = {
-            "id": str(channel.id)
-        }
-
-    default_channels = {
-        "chat": {
-            "id": "1234567899",
-        },
-
-        "voice 1": {
-            "id": "1321462575",
-        },
-
-        "welcomes": {
-            "id": "432534654",
-        },
-
-    }
-
-    disor_channel = disor.chat.completions.create(
-                    model=MODEL,
-                    messages=[
-                        {"role": "system", "content": "You going to take a name of category and search for one in the list and return its id ONLY"},
-
-                        {"role": "user", "content": f"شات العام\nchannels: {default_channels}"},
-                        {"role": "assistant", "content": "1234567899"},
-
-                        {"role": "user", "content": f"الروم الصوتي رقم 1 ده\nchannels: {default_channels}"},
-                        {"role": "assistant", "content": "1321462575"},
-
-                        {"role": "user", "content": f"welcomes | ترحيب\nchannels: {default_channels}"},
-                        {"role": "assistant", "content": "432534654"},
-
-                        {"role": "user", "content": f"{target}\nnchannels: {server_channels}"}
-                    ]
-    )
-
-    return guild.get_channel(int(disor_channel.choices[0].message.content)) 
-
-
-def disor_get_role(guild: discord.Guild, target: str):
-    server_roles = {}
-
-    for role in guild.roles:
-        server_roles[role.name] = {
-            "id": str(role.id),
-            "color": str(role.color)
-        }
-
-    default_channels = {
-        "vip": {
-            "id": "1234567899",
-            "color": "#ff0000"
-        },
-
-        "admin": {
-            "id": "1321462575",
-            "color": "#00ff00"
-        },
-
-        "member": {
-            "id": "432534654",
-            "color": "#0000ff"
-        },
-
-    }
-
-    disor_role = disor.chat.completions.create(
-                    model=MODEL,
-                    messages=[
-                        {"role": "system", "content": "You going to take a name of role and search for one in the list and return its id ONLY"},
-
-                        {"role": "user", "content": f"لونها احمر\nroles: {default_channels}"},
-                        {"role": "assistant", "content": "1234567899"},
-
-                        {"role": "user", "content": f"الادمن | admin\nroles: {default_channels}"},
-                        {"role": "assistant", "content": "1321462575"},
-
-                        {"role": "user", "content": f"العضو او ممبر\nroles: {default_channels}"},
-                        {"role": "assistant", "content": "432534654"},
-
-                        {"role": "user", "content": f"{target}\nroles: {server_roles}"}
-                    ]
-    )
-
-    return guild.get_role(int(disor_role.choices[0].message.content)) 
-
-
-def disor_get_member(guild: discord.Guild, target: str):
-    server_members = {}
-
-    print(target)
-    for member in guild.members:
-        server_members[member.name] = {
-            "id": str(member.id),
-            "global_name": str(member.global_name)
-        }
-
-    default_members = {
-        "ahmed": {
-            "id": "1234567899",
-            "global_name": "Hamada"
-        },
-
-        "mostafa": {
-            "id": "1321462575",
-            "global_name": "MOSTAFA IZ"
-        },
-
-        "mohammed": {
-            "id": "432534654",
-            "global_name": "Zigzag 0C"
-        },
-
-    }
-
-    sorted_members = ""
-    for member in server_members:
-        sorted_members += f"{member}: {server_members[member]["global_name"]} ({server_members[member]["id"]})\n"
-
-    disor_role = disor.chat.completions.create(
-                    model=MODEL,
-                    messages=[
-                        {"role": "system", "content": "You going to take a name of member and search for one in the list and return its id ONLY\n- Don't chat with me, return ID ONLY!\n- be direct and retrun ID-\n-if you found two or more members with the same name choose one of them randomly"},
-
-                        {"role": "user", "content": f"حماده\nMembers: {default_members}"},
-                        {"role": "assistant", "content": "1234567899"},
-
-                        {"role": "user", "content": f"mostafa iz\nMembers: {default_members}"},
-                        {"role": "assistant", "content": "1321462575"},
-
-                        {"role": "user", "content": f"Zigzag\nMembers: {default_members}"},
-                        {"role": "assistant", "content": "432534654"},
-
-                        {"role": "user", "content": f"{target}\nMembers:\n{sorted_members}"}
-                    ]
-    )
-
-    return guild.get_member(int(disor_role.choices[0].message.content))
-
-
-
-
-
-
-async def run_commands(commands: list, guild: discord.Guild):
-    for command in commands:
-        for key in command:
-            await asyncio.sleep(1)
-            if key.startswith("CreateChannel"):
-                print(f"Running command: Creating channel")
-                if command[key]["Type"] == "text":
-                    channel = await guild.create_text_channel(name=command[key]["Name"])
-
-                    if command[key]["Category"] != None:
-                        await channel.edit(category=disor_get_category(guild, command[key]["Category"]))
-
-                    
-
-                elif command[key]["Type"] == "voice":
-                    channel = await guild.create_voice_channel(name=command[key]["Name"])
-
-                    if command[key]["Category"] != None:
-                        await channel.edit(category=disor_get_category(guild, command[key]["Category"]))
-
-            elif key.startswith("DeleteChannel"):
-                print(f"Running command: Deleting channel")
-                channel = disor_get_channel(guild, command[key]["Name"])
-                await channel.delete()
-
-            elif key.startswith("EditChannelName"):
-                print(f"Running command: Changing channel name")
-                channel = disor_get_channel(guild, command[key]["Channel"])
-
-                await channel.edit(name=command[key]["Name"])
-
-            elif key.startswith("CreateRole"):
-                print(f"Running command: Creating role")
-                
-                role = await guild.create_role(name=command[key]["Name"], colour=discord.Colour.from_str(command[key]["Color"]))
-                perms = discord.Permissions(**command[key]["Perms"])
-                await role.edit(permissions=perms)
-                await guild.edit_role_positions(positions={role: command[key]["Position"] + 1})
-
-            
-            elif key.startswith("GrantRole"):
-                print(f"Running command: Giving role")
-                
-                member = disor_get_member(guild, command[key]["Member"])
-                role_to_grant = disor_get_role(guild, command[key]["Name"])
-                
-
-                await member.add_roles(role_to_grant)
-            
-            elif key.startswith("CreateCategory"):
-                print(f"Running command: Creating category")
-                
-                
-
-                await guild.create_category(name=command[key]["Name"])
-
-
-
+def has_admin_role(member: discord.Member) -> bool:
+    if member.guild.owner_id == member.id:
+        return True
+    for role in member.roles:
+        if role.permissions.administrator:
+            return True
+    return False
+
+# نظام توجيهات الذكاء الاصطناعي الشامل للصلاحيات والرتب وتكوين السيرفر
+AiAbout = "\n".join([
+    "You are a highly advanced and intelligent Discord Management Bot named UI.",
+    "CRITICAL RULES:",
+    "1. Language: Speak ONLY in natural, friendly, and humorous Egyptian Arabic (العامية المصرية).",
+    "2. Logic: Analyze user intent precisely before constructing actions. Rely strictly on the provided 'Server Context' for existing roles/channels.",
+    "3. Maximum 20 actions per single request to allow building full server categories, channels, and locks at once.",
+    "",
+    "AVAILABLE ACTIONS (Strict Case-Sensitive JSON format):",
+    "- Create Categories: 'CreateCategory' { 'Name': 'string' }",
+    "- Create Channels: 'CreateChannel' { 'Name': 'string', 'Type': 'text' or 'voice', 'Category': 'string' }",
+    "- Delete Channels: 'DeleteChannel' { 'Name': 'string' }",
+    "- Move Channel to another Category or make it unassigned (None): 'MoveChannel' { 'Name': 'string', 'Category': 'string' or null }",
+    "- Edit Channel Name: 'EditChannelName' { 'Channel': 'string', 'Name': 'string' }",
+    "- Lock Channel: 'LockChannel' { 'Name': 'string' }",
+    "- Unlock Channel: 'UnlockChannel' { 'Name': 'string' }",
+    "- Hide Channel: 'HideChannel' { 'Name': 'string' }",
+    "- Show Channel: 'ShowChannel' { 'Name': 'string' }",
+    "- Create Roles with specific granular permissions: 'CreateRole' { 'Name': 'string', 'Color': '#HEX', 'Permissions': { 'administrator': bool, 'manage_channels': bool, 'manage_roles': bool, 'kick_members': bool, 'ban_members': bool, 'manage_messages': bool, 'view_audit_log': bool, 'mention_everyone': bool, 'mute_members': bool, 'deafen_members': bool, 'move_members': bool, 'change_nickname': bool, 'manage_nicknames': bool, 'manage_webhooks': bool, 'manage_emojis': bool } }",
+    "- Delete Roles: 'DeleteRole' { 'Name': 'string' }",
+    "- Edit Role Color: 'EditRoleColor' { 'Name': 'string', 'Color': '#HEX' }",
+    "- Give Roles: 'GrantRole' { 'Name': 'string', 'Member': 'string' }",
+    "- Take Roles: 'TakeRole' { 'Name': 'string', 'Member': 'string' }",
+    "- Strip Roles: 'StripRoles' { 'Member': 'string' }",
+    "- Timeout Member: 'TimeoutMember' { 'Member': 'string', 'Duration': minutes_int, 'Reason': 'string' }",
+    "- Kick Member: 'KickMember' { 'Member': 'string', 'Reason': 'string' }",
+    "- Ban Member: 'BanMember' { 'Member': 'string', 'Reason': 'string' }",
+    "- Delete Messages: 'DeleteMessages' { 'Amount': number_int }",
+    "- Teach Custom Command: 'TeachCommand' { 'Trigger': 'string', 'Action': 'string' }",
+    "",
+    "RESPONSE FORMAT:",
+    "You must ALWAYS reply with your friendly Egyptian text first, followed by the valid JSON block enclosed in ```json ... ```. Never embed raw text inside the JSON block.",
+    "Example:",
+    "من عيوني يا باشا هظبطلك السيرفر والروماات والإيموجيات حالاً! 😉",
+    "```json",
+    "[",
+    "  {\"CreateCategory\": {\"Name\": \"•────────୨الأساسيات୧────────•\"}},",
+    "  {\"CreateChannel\": {\"Name\": \"↟❖الاخبار❖↟\", \"Type\": \"text\", \"Category\": \"•────────୨الأساسيات୧────────•\"}},",
+    "  {\"EditChannelName\": {\"Channel\": \"old-name\", \"Name\": \"new-name\"}}",
+    "]",
+    "```"
+])
+
+@bot.command(name="create_arab_roles")
+@commands.has_permissions(administrator=True)
+async def create_arab_roles(ctx):
+    status_msg = await ctx.reply("🚀 جاري إنشاء 22 رتبة للدول العربية بألوانها المميزة...")
+    created_count = 0
+    for country in ARAB_COUNTRIES:
+        try:
+            existing_role = discord.utils.get(ctx.guild.roles, name=country["name"])
+            if not existing_role:
+                role_color = discord.Colour.from_str(country["color"])
+                await ctx.guild.create_role(name=country["name"], colour=role_color)
+                created_count += 1
+                await asyncio.sleep(0.3)
+        except Exception as e:
+            print(f"فشل إنشاء رتبة {country['name']}: {e}")
+    await status_msg.edit(content=f"✅ تم إنشاء {created_count} رتبة للدول العربية بنجاح! 🌟")
+
+@bot.command(name="delete_arab_roles")
+@commands.has_permissions(administrator=True)
+async def delete_arab_roles(ctx):
+    status_msg = await ctx.reply("🗑️ جاري حذف جميع رتب الدول العربية الـ 22...")
+    deleted_count = 0
+    for country in ARAB_COUNTRIES:
+        try:
+            role = discord.utils.get(ctx.guild.roles, name=country["name"])
+            if role:
+                await role.delete()
+                deleted_count += 1
+                await asyncio.sleep(0.3)
+        except Exception as e:
+            print(f"فشل حذف رتبة {country['name']}: {e}")
+    await status_msg.edit(content=f"✅ تم حذف {deleted_count} رتبة من رتب الدول العربية بالكامل! 🧹")
+
+# دوال مساعدة للبحث
+def ui_get_category(guild: discord.Guild, target: str):
+    if not target:
+        return None
+    target_clean = str(target).strip().lower()
+    for cat in guild.categories:
+        if target_clean in cat.name.lower():
+            return cat
+    return None
+
+def ui_get_channel(guild: discord.Guild, target: str):
+    if not target:
+        return None
+    target_str = str(target).strip()
+    chan_id_match = re.search(r"\d+", target_str)
+    if chan_id_match:
+        channel = guild.get_channel(int(chan_id_match.group()))
+        if channel:
+            return channel
+    for chan in guild.channels:
+        if target_str.lower() in chan.name.lower():
+            return chan
+    return None
+
+def ui_get_role(guild: discord.Guild, target: str):
+    if not target:
+        return None
+    target_str = str(target).strip()
+    mention_match = re.search(r"<@&?(\d+)>", target_str)
+    if mention_match:
+        return guild.get_role(int(mention_match.group(1)))
     
+    clean_target = re.sub(r"[<@&>]", "", target_str).strip()
+    if clean_target.isdigit():
+        return guild.get_role(int(clean_target))
+        
+    for r in guild.roles:
+        if r.name.strip().lower() == target_str.lower():
+            return r
+    for r in guild.roles:
+        if target_str.lower() in r.name.lower():
+            return r
+    return None
 
+def ui_get_member(guild: discord.Guild, target: str):
+    if not target:
+        return None
+    target_str = str(target).strip()
+    user_id_match = re.search(r"<@!?(\d+)>", target_str)
+    if user_id_match:
+        return guild.get_member(int(user_id_match.group(1)))
+        
+    clean_target = re.sub(r"[<@!>]", "", target_str).strip()
+    if clean_target.isdigit():
+        return guild.get_member(int(clean_target))
+        
+    for m in guild.members:
+        if target_str.lower() in m.name.lower() or (m.global_name and target_str.lower() in m.global_name.lower()):
+            return m
+    return None
 
+# تشغيل ومعالجة الأوامر من الـ AI
+async def run_commands(commands_list: list, guild: discord.Guild, current_channel: discord.TextChannel, author: discord.Member):
+    for command in commands_list:
+        for key in command:
+            await asyncio.sleep(0.6)
+            try:
+                if key.startswith("TeachCommand"):
+                    trigger = command[key].get("Trigger")
+                    action = command[key].get("Action")
+                    if trigger and action:
+                        guild_id_str = str(guild.id)
+                        if guild_id_str not in custom_commands:
+                            custom_commands[guild_id_str] = {}
+                        custom_commands[guild_id_str][trigger.strip().lower()] = action.strip()
+                        save_custom_commands(custom_commands)
+                        await current_channel.send(f"💾 **عيوني ليك يا غالي!** حفظت الأمر: لما تقول `{trigger}`, هقوم فوراً بعمل: `{action}`.")
 
+                elif key.startswith("CreateCategory"):
+                    cat_name = command[key]["Name"]
+                    existing_cat = ui_get_category(guild, cat_name)
+                    if not existing_cat:
+                        await guild.create_category(name=cat_name)
+                        await current_channel.send(f"📁 تم إنشاء القسم **{cat_name}** بنجاح!")
 
+                elif key.startswith("CreateRole"):
+                    role_name = command[key]["Name"]
+                    color_hex = command[key].get("Color", "#99AAB5")
+                    color_parsed = parse_color(color_hex)
+                    
+                    perms_dict = command[key].get("Permissions", {})
+                    perms = discord.Permissions()
+                    
+                    for perm_name, value in perms_dict.items():
+                        if hasattr(perms, perm_name) and isinstance(value, bool):
+                            setattr(perms, perm_name, value)
+                            
+                    role = await guild.create_role(name=role_name, colour=color_parsed, permissions=perms)
+                    await current_channel.send(f"✅ تم إنشاء رتبة **{role.name}** بنجاح! 🛡️")
+
+                elif key.startswith("DeleteMessages"):
+                    amount = int(command[key].get("Amount", 100))
+                    deleted = await current_channel.purge(limit=amount + 1)
+                    await current_channel.send(f"🧹 تم مسح **{len(deleted) - 1}** رسالة بنجاح يا غالي!", delete_after=5)
+
+                elif key.startswith("CreateChannel"):
+                    name_to_create = command[key]["Name"]
+                    chan_type = command[key].get("Type", "text")
+                    if chan_type == "text":
+                        channel = await guild.create_text_channel(name=name_to_create)
+                    else:
+                        channel = await guild.create_voice_channel(name=name_to_create)
+                    
+                    cat_name = command[key].get("Category")
+                    if cat_name:
+                        category_obj = ui_get_category(guild, cat_name)
+                        if category_obj:
+                            await channel.edit(category=category_obj)
+                    await current_channel.send(f"✅ عملتلك الروم **{channel.name}** بنجاح!")
+
+                elif key.startswith("EditChannelName"):
+                    chan_target = command[key].get("Channel")
+                    new_name = command[key].get("Name")
+                    channel = ui_get_channel(guild, chan_target)
+                    if channel and new_name:
+                        old_name = channel.name
+                        await channel.edit(name=new_name)
+                        await current_channel.send(f"✏️ تم تغيير اسم الروم من **{old_name}** إلى **{new_name}** بنجاح!")
+                    else:
+                        await current_channel.send(f"❌ لم أجد الروم المطلوب تعديل اسمها: **{chan_target}**!")
+
+                elif key.startswith("MoveChannel"):
+                    chan_name = command[key].get("Name")
+                    cat_name = command[key].get("Category")
+                    
+                    channel = ui_get_channel(guild, chan_name)
+                    if channel:
+                        if cat_name is None:
+                            await channel.edit(category=None)
+                            await current_channel.send(f"📂 تم إخراج الروم **{channel.name}** لتصبح بدون فئة (برة الأقسام) بنجاح!")
+                        else:
+                            category_obj = ui_get_category(guild, cat_name)
+                            if category_obj:
+                                await channel.edit(category=category_obj)
+                                await current_channel.send(f"🔄 تم نقل الروم **{channel.name}** إلى القسم **{category_obj.name}** بنجاح!")
+                            else:
+                                await current_channel.send(f"❌ لم أجد القسم المطلوب باسم: **{cat_name}**!")
+
+                elif key.startswith("DeleteChannel"):
+                    chan_name = command[key].get("Name")
+                    channel = ui_get_channel(guild, chan_name)
+                    if channel:
+                        await channel.delete()
+                        await current_channel.send(f"🗑️ تم حذف روم **{chan_name}** بنجاح!")
+
+                elif key.startswith("LockChannel"):
+                    chan_name = command[key].get("Name")
+                    channel = ui_get_channel(guild, chan_name) if chan_name else current_channel
+                    if channel:
+                        await channel.set_permissions(guild.default_role, send_messages=False)
+                        await current_channel.send(f"🔒 تم قفل الروم **{channel.name}** بنجاح!")
+
+                elif key.startswith("UnlockChannel"):
+                    chan_name = command[key].get("Name")
+                    channel = ui_get_channel(guild, chan_name) if chan_name else current_channel
+                    if channel:
+                        await channel.set_permissions(guild.default_role, send_messages=None)
+                        await current_channel.send(f"🔓 تم فتح الروم **{channel.name}** بنجاح!")
+
+                elif key.startswith("HideChannel"):
+                    chan_name = command[key].get("Name")
+                    channel = ui_get_channel(guild, chan_name) if chan_name else current_channel
+                    if channel:
+                        await channel.set_permissions(guild.default_role, view_channel=False)
+                        await current_channel.send(f"👁️‍ تم إخفاء الروم **{channel.name}** بنجاح!")
+
+                elif key.startswith("ShowChannel"):
+                    chan_name = command[key].get("Name")
+                    channel = ui_get_channel(guild, chan_name) if chan_name else current_channel
+                    if channel:
+                        await channel.set_permissions(guild.default_role, view_channel=None)
+                        await current_channel.send(f"👁️ تم إظهار الروم **{channel.name}** بنجاح!")
+
+                elif key.startswith("GrantRole"):
+                    role_target = command[key].get("Name") or command[key].get("Role")
+                    member_target = command[key].get("Member") or command[key].get("User")
+                    
+                    role = ui_get_role(guild, role_target)
+                    member = ui_get_member(guild, member_target)
+                    
+                    if role and member:
+                        await member.add_roles(role)
+                        await current_channel.send(f"✅ تم إعطاء رتبة **{role.name}** للعضو **{member.name}** بنجاح!")
+
+                elif key.startswith("TakeRole"):
+                    role_target = command[key].get("Name") or command[key].get("Role")
+                    member_target = command[key].get("Member") or command[key].get("User")
+                    
+                    role = ui_get_role(guild, role_target)
+                    member = ui_get_member(guild, member_target)
+                    
+                    if role and member:
+                        await member.remove_roles(role)
+                        await current_channel.send(f"✅ تم سحب رتبة **{role.name}** من العضو **{member.name}** بنجاح!")
+
+                elif key.startswith("TimeoutMember"):
+                    member_target = command[key].get("Member") or command[key].get("User")
+                    duration_mins = int(command[key].get("Duration", 10))
+                    reason = command[key].get("Reason", "بواسطة نظام الإشراف بالذكاء الاصطناعي")
+                    member = ui_get_member(guild, member_target)
+                    
+                    if member:
+                        time_delta = timedelta(minutes=duration_mins)
+                        await member.timeout(time_delta, reason=reason)
+                        await current_channel.send(f"⏳ تم إعطاء تايم أوت للعضو **{member.name}** لمدة **{duration_mins}** دقيقة! 🔇")
+
+                elif key.startswith("KickMember"):
+                    member_target = command[key].get("Member") or command[key].get("User")
+                    reason = command[key].get("Reason", "بواسطة نظام الإشراف بالذكاء الاصطناعي")
+                    member = ui_get_member(guild, member_target)
+                    
+                    if member:
+                        await member.kick(reason=reason)
+                        await current_channel.send(f"👢 تم طرد العضو **{member.name}** من السيرفر بنجاح! ✈️")
+
+                elif key.startswith("BanMember"):
+                    member_target = command[key].get("Member") or command[key].get("User")
+                    reason = command[key].get("Reason", "بواسطة نظام الإشراف بالذكاء الاصطناعي")
+                    member = ui_get_member(guild, member_target)
+                    
+                    if member:
+                        await member.ban(reason=reason)
+                        await current_channel.send(f"🔨 تم تبنيد العضو **{member.name}** نهائياً! 🚪")
+                    else:
+                        clean_id = re.sub(r"\D", "", str(member_target))
+                        if clean_id:
+                            user_obj = await bot.fetch_user(int(clean_id))
+                            await guild.ban(user_obj, reason=reason)
+                            await current_channel.send(f"🔨 تم تبنيد العضو (بالـ ID) بنجاح! 🚪")
+
+                elif key.startswith("EditRoleColor"):
+                    role_name = command[key].get("Name")
+                    color_hex = command[key].get("Color")
+                    role = ui_get_role(guild, role_name)
+                    if role and color_hex:
+                        color_parsed = parse_color(color_hex)
+                        await role.edit(colour=color_parsed)
+                        await current_channel.send(f"🎨 تم تغيير لون الرتبة **{role.name}** بنجاح!")
+
+                elif key.startswith("DeleteRole"):
+                    role_name = command[key].get("Name")
+                    role = ui_get_role(guild, role_name)
+                    if role:
+                        await role.delete()
+                        await current_channel.send(f"🗑️ تم حذف الرتبة **{role_name}** بنجاح!")
+
+            except Exception as e:
+                print(f"خطأ أثناء تنفيذ الأمر {key}: {e}")
+                await current_channel.send(f"❌ واجهتني مشكلة أثناء تنفيذ الأمر {key} (تأكد من صلاحيات البوت وترتيب رتبه)!")
+
+# نظام فحص الرسائل للأوامر والذكاء الاصطناعي
 @bot.event
-async def on_message(m: discord.Message):
-    if m.author.id == bot.user.id:
+async def on_message(message):
+    if message.author.bot:
         return
 
-    if m.channel.id == 1518721970223583374:
-        
+    guild = message.guild
+    if not guild:
+        return
 
-        if bot.user.mention in m.content:
-            
-            final = m.content.replace(bot.user.mention, "")
+    guild_id_str = str(guild.id)
+    msg_content_clean = message.content.strip().lower()
 
-            async with m.channel.typing():
+    if has_admin_role(message.author):
+        if guild_id_str in custom_commands:
+            for trigger, raw_action in custom_commands[guild_id_str].items():
+                if trigger in msg_content_clean:
+                    action_lower = raw_action.lower()
+                    if "قفل" in action_lower or "lock" in action_lower:
+                        try:
+                            await message.channel.set_permissions(guild.default_role, send_messages=False)
+                            await message.reply(f"🔒 **سمعاً وطاعة يا مدير!** تم تنفيذ الأمر المخصص وقفل الروم فوراً.")
+                        except Exception:
+                            await message.reply("❌ حاولت أقفل الروم بس الصلاحيات مش كفاية يا غالي!")
+                        return
+                    elif "فتح" in action_lower or "unlock" in action_lower:
+                        try:
+                            await message.channel.set_permissions(guild.default_role, send_messages=None)
+                            await message.reply(f"🔓 **من عيوني!** تم تنفيذ الأمر المخصص وفتح الروم مجدداً.")
+                        except Exception:
+                            await message.reply("❌ تعذر فتح الروم، راجع الصلاحيات.")
+                        return
+
+    if bot.user.mentioned_in(message) or message.content.startswith(f"<@!{bot.user.id}>") or message.content.startswith(f"<@{bot.user.id}>"):
+        user_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
+        if not user_prompt:
+            await message.reply("نعم يا غالي؟ آمرني أنا في الخدمة! 😉")
+            return
+
+        async with message.channel.typing():
+            server_context = return_server_info(guild)
+            messages = [
+                {"role": "system", "content": AiAbout},
+                {"role": "system", "content": f"Server Context:\n{server_context}"},
+                {"role": "user", "content": user_prompt}
+            ]
+
+            try:
                 response = disor.chat.completions.create(
                     model=MODEL,
-                    messages=[
-                        {"role": "system", "content": f"Look at the user message and see if he wants to talk or want action, also if the user is asking questions return 'USER_IS_MESSAGING'\nAbout you: {AiAbout}\nDON'T chat with the user just take his message and return: 'USER_IS_MESSAGING' or 'USER_WANTS_ACTION' ONLY"},
-
-                        {"role": "user", "content": "عامل اي يسطا"},
-                        {"role": "assistant", "content": "USER_IS_MESSAGING"},
-
-                        {"role": "user", "content": "ممكن تطرد الشخص ده من سيرفر"},
-                        {"role": "assistant", "content": "USER_WANTS_ACTION"},
-
-                        {"role": "user", "content": "الو"},
-                        {"role": "assistant", "content": "USER_IS_MESSAGING"},
-
-                        {"role": "user", "content": "اعملي روم سميه chat"},
-                        {"role": "assistant", "content": "USER_WANTS_ACTION"},
-
-                        {"role": "user", "content": "اهلا"},
-                        {"role": "assistant", "content": "USER_IS_MESSAGING"},
-
-
-                        {"role": "user", "content": final},
-                    ]
+                    messages=messages
                 )
+                reply_text = response.choices[0].message.content
 
-                print(response.choices[0].message.content)
-                if response.choices[0].message.content.startswith("USER_IS_MESSAGING"):
-                    chatbot = disor.chat.completions.create(
-                        model=MODEL,
-                        messages=[
-                            {"role": "system", "content": f"تحدث إلى المستخدم وساعده أو قدم له أي مساعدة يطلبها...\nAbout you: {AiAbout}\nServer Information:\n{return_server_info(m.guild)}"},
-                            {"role": "user", "content": final}
-                        ]
-                    )
+                # استخراج الرد النصي وكتلة الـ JSON التنفيذية
+                json_match = re.search(r"```json\s*(.*?)\s*```", reply_text, re.DOTALL)
+                clean_reply = re.sub(r"```json.*?```", "", reply_text, flags=re.DOTALL).strip()
 
-                    await m.reply(chatbot.choices[0].message.content)
+                if clean_reply:
+                    await message.reply(clean_reply)
+                else:
+                    await message.reply("تمام يا باشا، جاري التنفيذ! 👌")
 
-                elif response.choices[0].message.content.startswith("USER_WANTS_ACTION"):
-                    actioner = disor.chat.completions.create(
-                        model=MODEL,
-                        messages=[
-                            {"role": "system", "content": f"""You tell the user you will TRY to do the action, but you're not sure if it will succeed.
-                            - Say things like 'let me try' or 'give me a sec' or 'on it'
-                            - NEVER say 'done' or 'completed' because you don't know yet
-                            - Keep it short, one sentence only
-                            About you: {AiAbout}"""},
+                if json_match:
+                    json_str = json_match.group(1)
+                    commands_list = json.loads(json_str)
+                    if isinstance(commands_list, list):
+                        await run_commands(commands_list, guild, message.channel, message.author)
 
-                            {"role": "user", "content": "اعملي روم اسمه chat"},
-                            {"role": "assistant", "content": "لحظات هعمله"},
+            except Exception as e:
+                print(f"Error communicating with Groq API: {e}")
+                await message.reply("❌ حصلت مشكلة وأنا بكلم العقل المدبر (Groq), حاول تاني كمان شوية!")
 
-                            {"role": "user", "content": "اطرد هذا الشخص"},
-                            {"role": "assistant", "content": "دعني اقوم بذلك"},
-
-                            {"role": "user", "content": "احذف هذا الروم"},
-                            {"role": "assistant", "content": "حسنا ثواني..."},
-
-
-                            {"role": "user", "content": final}
-                        ]
-                    )
-
-                    history.append({"role": "user", "content": ""}) # وقفت هنا
-
-                    await m.reply(actioner.choices[0].message.content)
-
-                    commands = []
-
-                    parser = disor.chat.completions.create(
-                        model=MODEL,
-                        messages=[
-                            {"role": "system", "content": f"""Take the user input and reply with JSON only NEVER CHANGE THE JSON FORMAT.
-
-                            If the user asks for something NOT in your available skills/actions (check "About you" below), respond with:
-                            {{"NoSkill0": {{"Reply": "رد طبيعي هنا يوضح إنك معرفش تعمل الطلب ده"}}}}
-
-                            Format: {{"CreateChannel0": {{"Name": "...", "Type": "..."}}}}
-                             
-                            ⚠️ NEVER leave a field empty ("") or omit a key if information is missing.
-                            If information is not provided or not found in Server Information, use these defaults:
-                            - "Name": generate a reasonable name based on context, NEVER leave empty
-                            - "Color": "#99AAB5" (Discord's default role color)
-                            - "Position": 0 (bottom, just above @everyone)
-                            - "Perms": none (no special permissions) (THIS IS THE IMPORTANT KEY, DON'T REMOVE IT!!!)
-                            
-                            
-                             
-                            Server Information:
-                            {return_server_info(m.guild)}
-
-                            if the user asked you to put a role higher than role, just type in 'Position' key the target role Pos
-                            if the user asked you to put a role lower than role, just type in 'Position' key the target role Pos - 1
-
-                            About you: {AiAbout}"""}, 
-
-                            {"role": "user", "content": "اعملي روم سميه chat"},
-                            {"role": "assistant", "content": "{\"CreateChannel0\": {\"Name\": \"chat\", \"Type\": \"text\", \"Category\": null}}"},
-
-                            {"role": "user", "content": "اعملي روم سميه chat و روم تاني اسمه welcome"},
-                            {"role": "assistant", "content": "{\"CreateChannel0\": {\"Name\": \"chat\", \"Type\": \"text\", \"Category\": null}, \"CreateChannel1\": {\"Name\": \"welcome\", \"Type\": \"text\", \"category\": null}}"},
-                            
-                            {"role": "user", "content": "اعملي روم صوتي سميه voice 1"},
-                            {"role": "assistant", "content": "{\"CreateChannel0\": {\"Name\": \"voice 1\", \"Type\": \"voice\", \"Category\": null}}"},
-
-                            {"role": "user", "content": "اعملي روم سميه chat و حطه في كاتجوري ديه General"},
-                            {"role": "assistant", "content": "{\"CreateChannel0\": {\"Name\": \"chat\", \"Type\": \"text\", \"Category\": \"General\"}}"},
-
-                            {"role": "user", "content": "احذف روم ده الي اسمه chat"},
-                            {"role": "assistant", "content": "{\"DeleteChannel0\": {\"Name\": \"chat\"}}"},
-
-                            {"role": "user", "content": "غير اسم الروم ده chat لـ welcome"},
-                            {"role": "assistant", "content": "{\"EditChannelName0\": {\"Channel\": \"chat\", \"Name\": \"welcome\"}}"},
-
-                            {"role": "user", "content": "غير اسم الروم الي اسمه chat ل welcome"},
-                            {"role": "assistant", "content": "{\"EditChannelName0\": {\"Channel\": \"chat\", \"Name\": \"welcome\"}}"},
-
-                            {"role": "user", "content": "اعملي رتبة سميها VIP لونها اخضر و حط فيها صلاحيه ريأكت و حطها"},
-                            {"role": "assistant", "content": "{\"CreateRole0\": {\"Name\": \"VIP\", \"Color\": \"#00FF00\", \"Position\": 0,\"Perms\": {\"add_reactions\": true} }}"},
-
-                            {"role": "user", "content": "ادي الشخص الي اسمه محمد ده رتبه ادمن الي لونها ازرق"},
-                            {"role": "assistant", "content": "{\"GrantRole0\": {\"Name\": \"ادمن الي لونها ازرق\", \"Member\": \"محمد\" }}"},
-                            
-                            {"role": "user", "content": "اعمل كاتجوري مكتوب عليها Generals"},
-                            {"role": "assistant", "content": "{\"CreateCategory0\": {\"Name\": \"Generals\"}}"},
-
-                            {"role": "user", "content": final}
-                        ]
-                    )
-
-
-
-
-                    print(parser.choices[0].message.content)
-
-                    try:
-                        raw = json.loads(parser.choices[0].message.content)
-                        for key, value in raw.items():
-                            if key.startswith("NoSkill"):
-                                await m.reply(raw[key]["Reply"])
-                            else:
-                                commands.append({key: value})
-                        
-                    except Exception as e:
-                        await m.reply(parser.choices[0].message.content)
-
-                    await run_commands(commands, m.guild)
-
-            
-        
+# تشغيل البوت عبر التوكن المخزن
 bot.run(get_token())
