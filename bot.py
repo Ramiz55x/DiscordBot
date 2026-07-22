@@ -7,6 +7,29 @@ import re
 import os
 from datetime import timedelta
 
+# --- إضافة خادم ويب مصغر (Keep Alive) لإرضاء منصة الاستضافة Render ---
+from flask import Flask
+from threading import Thread
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "UI Bot is Running Online!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+
+# تشغيل السيرفر المصغر في الخلفية
+keep_alive()
+# -----------------------------------------------------------------
+
 MODEL = "llama-3.3-70b-versatile"
 
 # ملفات تخزين البيانات
@@ -252,7 +275,7 @@ def ui_get_role(guild: discord.Guild, target: str):
     mention_match = re.search(r"<@&?(\d+)>", target_str)
     if mention_match:
         return guild.get_role(int(mention_match.group(1)))
-    
+        
     clean_target = re.sub(r"[<@&>]", "", target_str).strip()
     if clean_target.isdigit():
         return guild.get_role(int(clean_target))
