@@ -7,29 +7,6 @@ import re
 import os
 from datetime import timedelta
 
-# --- إضافة خادم ويب مصغر (Keep Alive) لإرضاء منصة الاستضافة Render ---
-from flask import Flask
-from threading import Thread
-
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "UI Bot is Running Online!"
-
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = Thread(target=run_flask)
-    t.daemon = True
-    t.start()
-
-# تشغيل السيرفر المصغر في الخلفية
-keep_alive()
-# -----------------------------------------------------------------
-
 MODEL = "llama-3.3-70b-versatile"
 
 # ملفات تخزين البيانات
@@ -38,10 +15,14 @@ CUSTOM_COMMANDS_FILE = "custom_commands.json"
 ROOM_COLORS_FILE = "room_colors.json"
 
 def get_token():
+    if not os.path.exists(DATA_FILE):
+        raise FileNotFoundError(f"لم يتم العثور على ملف البيانات {DATA_FILE}")
     with open(DATA_FILE, "r", encoding="utf-8") as file:
         return json.load(file)["TOKEN"].strip()
 
 def get_key():
+    if not os.path.exists(DATA_FILE):
+        raise FileNotFoundError(f"لم يتم العثور على ملف البيانات {DATA_FILE}")
     with open(DATA_FILE, "r", encoding="utf-8") as file:
         return json.load(file)["KEY"].strip()
 
@@ -143,7 +124,7 @@ def parse_color(color_str: str) -> discord.Colour:
             return discord.Colour.from_str(hex_val)
     try:
         return discord.Colour.from_str(f"#{color_clean}")
-    except:
+    except Exception:
         return discord.Colour.default()
 
 def return_server_info(guild: discord.Guild):
@@ -509,6 +490,9 @@ async def run_commands(commands_list: list, guild: discord.Guild, current_channe
 async def on_message(message):
     if message.author.bot:
         return
+
+    # معالجة الأوامر التقليدية مثل !create_arab_roles أو !delete_arab_roles أولاً
+    await bot.process_commands(message)
 
     guild = message.guild
     if not guild:
