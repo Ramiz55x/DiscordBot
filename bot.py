@@ -9,22 +9,30 @@ from datetime import timedelta
 
 MODEL = "llama-3.3-70b-versatile"
 
-# ملفات تخزين البيانات
+# ملفات تخزين البيانات المحلية
 DATA_FILE = "data.json"
 CUSTOM_COMMANDS_FILE = "custom_commands.json"
 ROOM_COLORS_FILE = "room_colors.json"
 
+# جلب التوكن: يبحث في Environment Variables أولاً ثم في data.json
 def get_token():
-    if not os.path.exists(DATA_FILE):
-        raise FileNotFoundError(f"لم يتم العثور على ملف البيانات {DATA_FILE}")
-    with open(DATA_FILE, "r", encoding="utf-8") as file:
-        return json.load(file)["TOKEN"].strip()
+    token = os.getenv("TOKEN")
+    if token:
+        return token.strip()
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r", encoding="utf-8") as file:
+            return json.load(file).get("TOKEN", "").strip()
+    raise ValueError("❌ لم يتم العثور على TOKEN! أضفه في Environment Variables على Render باسم TOKEN.")
 
+# جلب المفتاح: يبحث في Environment Variables أولاً ثم في data.json
 def get_key():
-    if not os.path.exists(DATA_FILE):
-        raise FileNotFoundError(f"لم يتم العثور على ملف البيانات {DATA_FILE}")
-    with open(DATA_FILE, "r", encoding="utf-8") as file:
-        return json.load(file)["KEY"].strip()
+    key = os.getenv("KEY")
+    if key:
+        return key.strip()
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r", encoding="utf-8") as file:
+            return json.load(file).get("KEY", "").strip()
+    raise ValueError("❌ لم يتم العثور على KEY! أضفه في Environment Variables على Render باسم KEY.")
 
 disor = G(api_key=get_key())
 
